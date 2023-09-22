@@ -5,6 +5,7 @@ import string
 import typing as t
 from datetime import datetime, timedelta
 
+import discord
 from discord.ext import commands
 from loguru import logger
 
@@ -12,13 +13,13 @@ import helpers.constant as constant
 import helpers.custom_check as custom_check
 import helpers.message as message
 import helpers.pillow as pillow
+import views.pagination_view as pagination_view
 import views.wish_view as wish_view
 from models.anicard import Anicard
 from models.user import User
 
 if t.TYPE_CHECKING:
     import asyncpg
-    import discord
     from PIL import Image
 
     from launcher import Uwuily
@@ -167,6 +168,125 @@ class AnicardCog(commands.Cog):
             file=wish_image_file,
             view=view,
         )
+
+    """
+    ############################################################
+    COLLECTION
+    ############################################################
+    """
+
+    ANICLASS_PREFIX = {
+        "a": "⚜",
+        "artisan": "⚜",
+        "c": "⚔",
+        "combatant": "⚔",
+        "g": "☄",
+        "gatherer": "☄",
+    }
+
+    ORDER_PREFIX = {
+        "c": "character",
+        "character": "character",
+        "cd": "codex",
+        "codex": "codex",
+    }
+
+    PREFIX_MAP = {
+        "c": ("character", lambda key: key.title()),
+        "character": ("character", lambda key: key.title()),
+        "a": ("aniclass", lambda key: AnicardCog.ANICLASS_PREFIX.get(key, None)),
+        "aniclass": ("aniclass", lambda key: AnicardCog.ANICLASS_PREFIX.get(key, None)),
+        "o": ("order", lambda key: AnicardCog.ORDER_PREFIX.get(key, "obtained_ts")),
+        "order": ("order", lambda key: AnicardCog.ORDER_PREFIX.get(key, "obtained_ts")),
+    }
+
+    def parse_filter(self, collection_filter: str | None) -> dict[str, str]:
+        parsed_filter = {
+            "character": None,
+            "aniclass": None,
+            "order": "obtained_ts",
+        }
+        if not collection_filter:
+            return parsed_filter
+        conditions = collection_filter.split(" ")
+        for condition in conditions:
+            prefix, key = condition.lower().split(":", 1)
+            if prefix in self.PREFIX_MAP:
+                field, transform = self.PREFIX_MAP[prefix]
+                parsed_filter[field] = transform(key)
+        return parsed_filter
+
+    def apply_filter(self, collection: list[Anicard], parsed_filter: dict[str, str]) -> list[Anicard]:
+        if parsed_filter["character"]:
+            collection = [minion for minion in collection if parsed_filter["character"] in str(minion.character)]
+        if parsed_filter["aniclass"]:
+            collection = [minion for minion in collection if parsed_filter["aniclass"] == minion.aniclass]
+        if parsed_filter["order"]:
+            collection = sorted(collection, key=lambda minion: getattr(minion, parsed_filter["order"]))
+        return collection
+
+    def paginate_collection(self, ctx: commands.Context, collection: list[Anicard]) -> list[discord.Embed]:
+        formatted_anicard_data = []
+        for anicard in collection:
+            minion_text = f"`[{anicard.aniclass} {anicard.codex}] {anicard.character}` • `Tier {anicard.tier}` • `{anicard.tag}`\n"
+            if anicard.is_shattered:
+                minion_text = f"*~~{minion_text}~~*"
+            formatted_anicard_data.append(minion_text)
+        # Split the formatted_anicard_data into sublist of 10.
+        embed_description_sublist = [
+            formatted_anicard_data[n : n + 10] for n in range(0, len(formatted_anicard_data), 10)
+        ]
+        # Turn each sublist into an embed page.
+        embed_pages = []
+        for index, page in enumerate(embed_description_sublist):
+            embed_description = "".join(page)
+            embed_title = f"{ctx.author.name.title()}'s Anicard Collections"
+            collection_embed = discord.Embed(
+                title=embed_title,
+                description=embed_description,
+                color=constant.CustomColors.BLUE,
+            )
+            footer_text = f"Page ({index+1}/{len(embed_description_sublist)})"
+            collection_embed.set_footer(text=footer_text)
+            embed_pages.append(collection_embed)
+        return embed_pages
+
+    @commands.hybrid_command(
+        name="collection",
+        aliases=["c"],
+        description="View your Anicard collection.",
+    )
+    @commands.cooldown(1, constant.Cooldown.COMMAND, commands.BucketType.user)
+    @custom_check.is_registered()
+    @logger.catch
+    async def collection(self, ctx: commands.Context, *, collection_filter: str | None) -> None:
+        user = User(user_id=ctx.author.id)
+        await user.fetch_data(ctx=ctx, get_anicards=True)
+        if not user.anicards:
+            await message.Send.error(
+                ctx=ctx,
+                message=("You do not have any Anicards in your collection! Try wishing for one by typing `uwu wish`."),
+            )
+            return None
+
+        parsed_filter: dict[str, str] = self.parse_filter(collection_filter=collection_filter)
+        filtered_collection: list[Anicard] = self.apply_filter(
+            collection=user.anicards,
+            parsed_filter=parsed_filter,
+        )
+        if not filtered_collection:
+            await message.Send.error(
+                ctx=ctx,
+                message="No Anicards found with the given filter. Try again with a different filter.",
+            )
+            return None
+        paginated_collection: list[discord.Embed] = self.paginate_collection(
+            ctx=ctx,
+            collection=filtered_collection,
+        )
+
+        view = pagination_view.PaginationView(ctx=ctx, embeds=paginated_collection)
+        view.view_message = await ctx.send(content=ctx.author.mention, embed=paginated_collection[0], view=view)
 
 
 async def setup(bot: Uwuily) -> None:

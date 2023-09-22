@@ -4,6 +4,9 @@ from datetime import datetime, timedelta
 
 from discord.ext import commands
 
+from models.anicard import Anicard
+
+
 if t.TYPE_CHECKING:
     import asyncpg
 
@@ -86,7 +89,17 @@ class User:
             pass
 
         if get_anicards:
-            pass
+            query: asyncpg.Record = await ctx.bot.db.fetch(
+                """
+                SELECT *
+                FROM user_anicards
+                JOIN minions ON user_anicards.minion_id = minions.minion_id
+                WHERE user_id = $1;
+                """,
+                ctx.author.id,
+            )
+            anicard_data = [dict(record) for record in query]
+            self.anicards = [Anicard(**item) for item in anicard_data]
 
         if get_minions:
             pass
