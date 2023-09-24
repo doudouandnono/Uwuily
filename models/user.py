@@ -6,7 +6,6 @@ from discord.ext import commands
 
 from models.anicard import Anicard
 
-
 if t.TYPE_CHECKING:
     import asyncpg
 
@@ -86,7 +85,16 @@ class User:
             self.cooldowns = cooldown_data
 
         if get_configs:
-            pass
+            query: asyncpg.Record = await ctx.bot.db.fetchrow(
+                """
+                SELECT *
+                FROM user_configs
+                WHERE user_id = $1;
+                """,
+                ctx.author.id,
+            )
+            config_data = dict(query) if query else {}
+            self.configs = config_data
 
         if get_anicards:
             query: asyncpg.Record = await ctx.bot.db.fetch(
