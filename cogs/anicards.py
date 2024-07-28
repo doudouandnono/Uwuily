@@ -287,6 +287,7 @@ class AnicardCog(commands.Cog):
 
         view = pagination_view.PaginationView(ctx=ctx, embeds=paginated_collection)
         view.view_message = await ctx.send(content=ctx.author.mention, embed=paginated_collection[0], view=view)
+        await ctx.send("gglol!")
 
 
 async def setup(bot: Uwuily) -> None:
